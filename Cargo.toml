@@ -20,13 +20,14 @@ maintenance = { status = "actively-developed" }
 accept-rfc3339-timestamps = []
 accept-string-booleans = []
 curl = ["oauth2/curl"]
-default = ["reqwest", "rustls-tls"]
+default = ["reqwest", "rustls-tls", "jwt-access-token"]
 native-tls = ["oauth2/native-tls"]
 reqwest = ["oauth2/reqwest"]
 reqwest-blocking = ["oauth2/reqwest-blocking"]
 rustls-tls = ["oauth2/rustls-tls"]
 timing-resistant-secret-traits = ["oauth2/timing-resistant-secret-traits"]
 ureq = ["oauth2/ureq"]
+jwt-access-token = []
 
 [[example]]
 name = "gitlab"

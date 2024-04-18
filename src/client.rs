@@ -147,6 +147,7 @@ pub struct Client<
     userinfo_endpoint: Option<UserInfoUrl>,
     pub(crate) jwks: JsonWebKeySet<K>,
     id_token_signing_algs: Option<Vec<K::SigningAlgorithm>>,
+    authorization_signing_algs: Option<Vec<K::SigningAlgorithm>>,
     use_openid_scope: bool,
     _phantom: PhantomData<(AC, AD, GC, JE, P, HasUserInfoUrl)>,
 }
@@ -195,6 +196,7 @@ where
             userinfo_endpoint: None,
             jwks,
             id_token_signing_algs: None,
+            authorization_signing_algs: None,
             use_openid_scope: true,
             _phantom: PhantomData,
         }
@@ -274,6 +276,9 @@ where
                     .id_token_signing_alg_values_supported()
                     .to_owned(),
             ),
+            authorization_signing_algs: provider_metadata
+                .authorization_signing_alg_values_supported()
+                .cloned(),
             use_openid_scope: true,
             _phantom: PhantomData,
         }
@@ -393,6 +398,7 @@ where
             userinfo_endpoint: self.userinfo_endpoint,
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -451,6 +457,7 @@ where
             userinfo_endpoint: self.userinfo_endpoint,
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -489,6 +496,7 @@ where
             userinfo_endpoint: self.userinfo_endpoint,
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -538,6 +546,7 @@ where
             userinfo_endpoint: self.userinfo_endpoint,
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -579,6 +588,7 @@ where
             userinfo_endpoint: self.userinfo_endpoint,
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -617,6 +627,7 @@ where
             userinfo_endpoint: Some(userinfo_endpoint),
             jwks: self.jwks,
             id_token_signing_algs: self.id_token_signing_algs,
+            authorization_signing_algs: self.authorization_signing_algs,
             use_openid_scope: self.use_openid_scope,
             _phantom: PhantomData,
         }
@@ -657,6 +668,23 @@ where
 
         if let Some(id_token_signing_algs) = self.id_token_signing_algs.clone() {
             verifier.set_allowed_algs(id_token_signing_algs)
+        } else {
+            verifier
+        }
+    }
+
+    #[cfg(feature = "jwt-access-token")]
+    /// Return an JWT access token verifier for use with the [`JwtAccessToken::claims`](crate::JwtAccessToken::claims)
+    /// method.
+    pub fn jwt_access_token_verifier(&self) -> crate::verification::JwtAccessTokenVerifier<K> {
+        let verifier = crate::verification::JwtAccessTokenVerifier::new_public_client(
+            self.client_id.clone(),
+            self.issuer.clone(),
+            self.jwks.clone(),
+        );
+
+        if let Some(authorization_signing_algs) = self.authorization_signing_algs.clone() {
+            verifier.set_allowed_algs(authorization_signing_algs)
         } else {
             verifier
         }

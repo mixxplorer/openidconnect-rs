@@ -4,7 +4,7 @@ use crate::{
     AdditionalClaims, Audience, AuthenticationContextClass, ClientId, ClientSecret, GenderClaim,
     IdTokenClaims, IssuerUrl, JsonWebKey, JsonWebKeyId, JsonWebKeySet, JsonWebTokenAccess,
     JsonWebTokenAlgorithm, JsonWebTokenHeader, JsonWebTokenType, JweContentEncryptionAlgorithm,
-    JwsSigningAlgorithm, Nonce, SubjectIdentifier,
+    JwsSigningAlgorithm, JwtAccessTokenClaims, Nonce, SubjectIdentifier,
 };
 
 use chrono::{DateTime, Utc};
@@ -519,6 +519,289 @@ where
 {
     fn verify(self, nonce: Option<&Nonce>) -> Result<(), String> {
         self(nonce)
+    }
+}
+
+/// JWT access token verifier.
+#[derive(Clone)]
+pub struct JwtAccessTokenVerifier<'a, K>
+where
+    K: JsonWebKey,
+{
+    acr_verifier_fn:
+        Arc<dyn Fn(Option<&AuthenticationContextClass>) -> Result<(), String> + 'a + Send + Sync>,
+    #[allow(clippy::type_complexity)]
+    auth_time_verifier_fn:
+        Arc<dyn Fn(Option<DateTime<Utc>>) -> Result<(), String> + 'a + Send + Sync>,
+    iat_verifier_fn: Arc<dyn Fn(DateTime<Utc>) -> Result<(), String> + 'a + Send + Sync>,
+    pub(crate) jwt_verifier: JwtClaimsVerifier<'a, K>,
+    time_fn: Arc<dyn Fn() -> DateTime<Utc> + 'a + Send + Sync>,
+}
+impl<'a, K> JwtAccessTokenVerifier<'a, K>
+where
+    K: JsonWebKey,
+{
+    fn new(jwt_verifier: JwtClaimsVerifier<'a, K>) -> Self {
+        JwtAccessTokenVerifier {
+            // By default, accept authorization context reference (acr claim).
+            acr_verifier_fn: Arc::new(|_| Ok(())),
+            auth_time_verifier_fn: Arc::new(|_| Ok(())),
+            // By default, accept any issued time (iat claim).
+            iat_verifier_fn: Arc::new(|_| Ok(())),
+            jwt_verifier,
+            // By default, use the current system time.
+            time_fn: Arc::new(Utc::now),
+        }
+    }
+
+    /// Initializes a new verifier for a public client (i.e., one without a client secret).
+    pub fn new_public_client(
+        client_id: ClientId,
+        issuer: IssuerUrl,
+        signature_keys: JsonWebKeySet<K>,
+    ) -> Self {
+        Self::new(
+            JwtClaimsVerifier::new(client_id, issuer, signature_keys).set_allowed_jose_types(vec![
+                JsonWebTokenType::new("at+jwt".to_string())
+                    .normalize()
+                    .expect("at+jwt should be a valid JWT type"),
+            ]),
+        )
+    }
+
+    /// Initializes a no-op verifier that performs no signature, audience, or issuer verification.
+    /// The token's expiration time is still checked, and the token is otherwise required to conform to the expected format.
+    pub fn new_insecure_without_verification() -> Self {
+        let empty_issuer = IssuerUrl::new("https://0.0.0.0".to_owned())
+            .expect("Creating empty issuer url mustn't fail");
+        Self::new_public_client(
+            ClientId::new(String::new()),
+            empty_issuer,
+            JsonWebKeySet::new(vec![]),
+        )
+        .insecure_disable_signature_check()
+        .require_audience_match(false)
+        .require_issuer_match(false)
+    }
+
+    /// Specifies which JSON Web Signature algorithms are supported.
+    pub fn set_allowed_algs<I>(mut self, algs: I) -> Self
+    where
+        I: IntoIterator<Item = K::SigningAlgorithm>,
+    {
+        self.jwt_verifier = self.jwt_verifier.set_allowed_algs(algs);
+        self
+    }
+
+    /// Specifies that any signature algorithm is supported.
+    pub fn allow_any_alg(mut self) -> Self {
+        self.jwt_verifier = self.jwt_verifier.allow_any_alg();
+        self
+    }
+
+    /// Specifies which JSON Web Token Header types are allowed
+    pub fn set_allowed_jose_types(mut self, types: Vec<NormalizedJsonWebTokenType>) -> Self {
+        self.jwt_verifier = self.jwt_verifier.set_allowed_jose_types(types);
+        self
+    }
+
+    // Allow all JSON Web Token Header types
+    pub fn allow_all_jose_types(mut self) -> Self {
+        self.jwt_verifier = self.jwt_verifier.allow_all_jose_types();
+        self
+    }
+
+    /// Specifies a function for verifying the `acr` claim.
+    ///
+    /// The function should return `Ok(())` if the claim is valid, or a string describing the error
+    /// otherwise.
+    pub fn set_auth_context_verifier_fn<T>(mut self, acr_verifier_fn: T) -> Self
+    where
+        T: Fn(Option<&AuthenticationContextClass>) -> Result<(), String> + 'a + Send + Sync,
+    {
+        self.acr_verifier_fn = Arc::new(acr_verifier_fn);
+        self
+    }
+
+    /// Specifies a function for verifying the `auth_time` claim.
+    ///
+    /// The function should return `Ok(())` if the claim is valid, or a string describing the error
+    /// otherwise.
+    pub fn set_auth_time_verifier_fn<T>(mut self, auth_time_verifier_fn: T) -> Self
+    where
+        T: Fn(Option<DateTime<Utc>>) -> Result<(), String> + 'a + Send + Sync,
+    {
+        self.auth_time_verifier_fn = Arc::new(auth_time_verifier_fn);
+        self
+    }
+
+    /// Enables signature verification.
+    ///
+    /// Signature verification is enabled by default, so this function is only useful if
+    /// [`IdTokenVerifier::insecure_disable_signature_check`] was previously invoked.
+    pub fn enable_signature_check(mut self) -> Self {
+        self.jwt_verifier = self.jwt_verifier.require_signature_check(true);
+        self
+    }
+
+    /// Disables signature verification.
+    ///
+    /// # Security Warning
+    ///
+    /// Unverified tokens may be subject to forgery. See [Section 16.3](
+    /// https://openid.net/specs/openid-connect-core-1_0.html#TokenManufacture) for more
+    /// information.
+    pub fn insecure_disable_signature_check(mut self) -> Self {
+        self.jwt_verifier = self.jwt_verifier.require_signature_check(false);
+        self
+    }
+
+    /// Specifies whether the issuer claim must match the expected issuer URL for the provider.
+    pub fn require_issuer_match(mut self, iss_required: bool) -> Self {
+        self.jwt_verifier = self.jwt_verifier.require_issuer_match(iss_required);
+        self
+    }
+
+    /// Specifies whether the audience claim must match this client's client ID.
+    ///
+    /// # Security warning
+    ///
+    /// Turning off this check might allow reusing of access tokens from other clients, thus
+    /// enabling severe security threats.
+    pub fn require_audience_match(mut self, aud_required: bool) -> Self {
+        self.jwt_verifier = self.jwt_verifier.require_audience_match(aud_required);
+        self
+    }
+
+    /// Specifies a function for returning the current time.
+    ///
+    /// This function is used for verifying the ID token expiration time.
+    pub fn set_time_fn<T>(mut self, time_fn: T) -> Self
+    where
+        T: Fn() -> DateTime<Utc> + 'a + Send + Sync,
+    {
+        self.time_fn = Arc::new(time_fn);
+        self
+    }
+
+    /// Specifies a function for verifying the ID token issue time.
+    ///
+    /// The function should return `Ok(())` if the claim is valid, or a string describing the error
+    /// otherwise.
+    pub fn set_issue_time_verifier_fn<T>(mut self, iat_verifier_fn: T) -> Self
+    where
+        T: Fn(DateTime<Utc>) -> Result<(), String> + 'a + Send + Sync,
+    {
+        self.iat_verifier_fn = Arc::new(iat_verifier_fn);
+        self
+    }
+
+    /// Specifies a function for verifying audiences included in the `aud` claim that differ from
+    /// this client's client ID.
+    ///
+    /// The function should return `true` if the audience is trusted, or `false` otherwise.
+    pub fn set_other_audience_verifier_fn<T>(mut self, other_aud_verifier_fn: T) -> Self
+    where
+        T: Fn(&Audience) -> bool + 'a + Send + Sync,
+    {
+        self.jwt_verifier = self
+            .jwt_verifier
+            .set_other_audience_verifier_fn(other_aud_verifier_fn);
+        self
+    }
+
+    pub(crate) fn verified_claims<'b, AC, GC, JE>(
+        &self,
+        jwt: &'b JsonWebToken<
+            JE,
+            K::SigningAlgorithm,
+            JwtAccessTokenClaims<AC, GC>,
+            JsonWebTokenJsonPayloadSerde,
+        >,
+    ) -> Result<&'b JwtAccessTokenClaims<AC, GC>, ClaimsVerificationError>
+    where
+        AC: AdditionalClaims,
+        GC: GenderClaim,
+        JE: JweContentEncryptionAlgorithm<
+            KeyType = <K::SigningAlgorithm as JwsSigningAlgorithm>::KeyType,
+        >,
+    {
+        // The code below roughly follows the validation steps described in
+        // https://datatracker.ietf.org/doc/html/rfc9068#name-validating-jwt-access-token
+
+        // Steps 2--5 are handled by the generic JwtClaimsVerifier.
+        let partially_verified_claims = self.jwt_verifier.verified_claims(jwt)?;
+
+        self.verify_claims(partially_verified_claims)?;
+        Ok(partially_verified_claims)
+    }
+
+    pub(crate) fn verified_claims_owned<AC, GC, JE>(
+        &self,
+        jwt: JsonWebToken<
+            JE,
+            K::SigningAlgorithm,
+            JwtAccessTokenClaims<AC, GC>,
+            JsonWebTokenJsonPayloadSerde,
+        >,
+    ) -> Result<JwtAccessTokenClaims<AC, GC>, ClaimsVerificationError>
+    where
+        AC: AdditionalClaims,
+        GC: GenderClaim,
+        JE: JweContentEncryptionAlgorithm<
+            KeyType = <K::SigningAlgorithm as JwsSigningAlgorithm>::KeyType,
+        >,
+    {
+        // The code below roughly follows the validation steps described in
+        // https://datatracker.ietf.org/doc/html/rfc9068#name-validating-jwt-access-token
+
+        let partially_verified_claims = self.jwt_verifier.verified_claims(jwt)?;
+
+        self.verify_claims(&partially_verified_claims)?;
+        Ok(partially_verified_claims)
+    }
+
+    fn verify_claims<AC, GC>(
+        &self,
+        partially_verified_claims: &'_ JwtAccessTokenClaims<AC, GC>,
+    ) -> Result<(), ClaimsVerificationError>
+    where
+        AC: AdditionalClaims,
+        GC: GenderClaim,
+    {
+        // Verify token header matches
+
+        // Steps 2--5 are handled by the generic JwtClaimsVerifier.
+
+        // 6. The current time MUST be before the time represented by the exp Claim.
+        let cur_time = (*self.time_fn)();
+        if cur_time >= partially_verified_claims.expiration() {
+            return Err(ClaimsVerificationError::Expired(format!(
+                "ID token expired at {} (current time is {})",
+                partially_verified_claims.expiration(),
+                cur_time
+            )));
+        }
+
+        // (opt) The iat Claim can be used to reject tokens that were issued too far away from the
+        //       current time. The acceptable range is Client specific.
+        (*self.iat_verifier_fn)(partially_verified_claims.issue_time())
+            .map_err(ClaimsVerificationError::Expired)?;
+
+        // (opt) If the acr Claim was requested, the Client SHOULD check that the asserted Claim Value
+        //       is appropriate. The meaning and processing of acr Claim Values is out of scope for
+        //       this specification.
+        (*self.acr_verifier_fn)(partially_verified_claims.auth_context_ref())
+            .map_err(ClaimsVerificationError::InvalidAuthContext)?;
+
+        // (opt) If the auth_time Claim was requested, either through a specific request for this
+        //       Claim or by using the max_age parameter, the Client SHOULD check the auth_time Claim
+        //       value and request re-authentication if it determines too much time has elapsed since
+        //       the last End-User authentication.
+        (*self.auth_time_verifier_fn)(partially_verified_claims.auth_time())
+            .map_err(ClaimsVerificationError::InvalidAuthTime)?;
+
+        Ok(())
     }
 }
 

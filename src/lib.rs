@@ -647,6 +647,7 @@ mod client;
 mod discovery;
 mod helpers;
 mod id_token;
+mod jwt_access_token;
 mod logout;
 mod token;
 mod types;
@@ -706,6 +707,8 @@ pub use crate::discovery::{
 pub use crate::id_token::IdTokenFields;
 pub use crate::id_token::{IdToken, IdTokenClaims};
 pub use crate::jwt::{JsonWebTokenError, JsonWebTokenType, NormalizedJsonWebTokenType};
+#[cfg(feature = "jwt-access-token")]
+pub use crate::jwt_access_token::{JwtAccessToken, JwtAccessTokenClaims, JwtAccessTokenFields};
 pub use crate::logout::{LogoutProviderMetadata, LogoutRequest, ProviderMetadataWithLogout};
 pub use crate::token::TokenResponse;
 // Flatten the module hierarchy involving types. They're only separated to improve code

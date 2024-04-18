@@ -166,6 +166,12 @@ new_type![
     }
 ];
 
+new_secret_type![
+    /// Json Web Token Id, according to RFC9068
+    #[derive(Clone, Deserialize, Serialize)]
+    JwtId(String)
+];
+
 new_type![
     /// OpenID Connect client name.
     #[derive(Deserialize, Hash, Ord, PartialOrd, Serialize)]

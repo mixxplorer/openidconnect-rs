@@ -75,6 +75,27 @@ where
     acr_values_supported: Option<Vec<AuthenticationContextClass>>,
     #[serde(bound(deserialize = "S: SubjectIdentifierType"))]
     subject_types_supported: Vec<S>,
+
+    // fields from https://openid.net/specs/oauth-v2-jarm-03.html#name-authorization-server-metada
+    #[serde(bound(deserialize = "K: JsonWebKey"), default = "Option::default")]
+    #[serde_as(as = "Option<VecSkipError<_>>")]
+    authorization_signing_alg_values_supported: Option<Vec<K::SigningAlgorithm>>,
+    #[serde(
+        bound(deserialize = "JK: JweKeyManagementAlgorithm"),
+        default = "Option::default"
+    )]
+    #[serde_as(as = "Option<VecSkipError<_>>")]
+    authorization_encryption_alg_values_supported: Option<Vec<JK>>,
+    #[serde(
+        bound(
+            deserialize = "JE: JweContentEncryptionAlgorithm<KeyType = <K::SigningAlgorithm as JwsSigningAlgorithm>::KeyType>"
+        ),
+        default = "Option::default"
+    )]
+    #[serde_as(as = "Option<VecSkipError<_>>")]
+    authorization_encryption_enc_values_supported: Option<Vec<JE>>,
+
+    // continuing with OIDC Core
     #[serde(bound(deserialize = "K: JsonWebKey"))]
     #[serde_as(as = "VecSkipError<_>")]
     id_token_signing_alg_values_supported: Vec<K::SigningAlgorithm>,
@@ -192,6 +213,9 @@ where
             grant_types_supported: None,
             acr_values_supported: None,
             subject_types_supported,
+            authorization_signing_alg_values_supported: None,
+            authorization_encryption_alg_values_supported: None,
+            authorization_encryption_enc_values_supported: None,
             id_token_signing_alg_values_supported,
             id_token_encryption_alg_values_supported: None,
             id_token_encryption_enc_values_supported: None,
@@ -235,6 +259,12 @@ where
             set_acr_values_supported
                 -> acr_values_supported[Option<Vec<AuthenticationContextClass>>],
             set_subject_types_supported -> subject_types_supported[Vec<S>],
+            set_authorization_signing_alg_values_supported
+                -> authorization_signing_alg_values_supported[Option<Vec<K::SigningAlgorithm>>],
+            set_authorization_encryption_alg_values_supported
+                -> authorization_encryption_alg_values_supported[Option<Vec<JK>>],
+            set_authorization_encryption_enc_values_supported
+                -> authorization_encryption_enc_values_supported[Option<Vec<JE>>],
             set_id_token_signing_alg_values_supported
                 -> id_token_signing_alg_values_supported[Vec<K::SigningAlgorithm>],
             set_id_token_encryption_alg_values_supported
